@@ -24,6 +24,11 @@ import csv
 # Import module to get a current time and date used to name the files containing the history of simulations
 from datetime import datetime
 
+# To detect the latest csv file
+import glob
+# to keep the loaded data
+import pandas as pd
+
 from controllers.controller_lqr import controller_lqr
 from controllers.controller_do_mpc import controller_do_mpc
 from controllers.controller_do_mpc_discrete import controller_do_mpc_discrete
@@ -89,12 +94,12 @@ class Cart:
 
         self.slider_value = 0.0
         self.dt = dt
-        self.time_total = 0.0
+        self.time = 0.0
         self.dict_history = {}
         self.reset_dict_history()
         self.save_history = save_history
         self.random_trace_generated = False
-        self.play_pregenerated = False
+        self.use_pregenerated_target_position = False
 
         # Physical parameters of the cart
         self.p = SimpleNamespace()  # p like parameters
@@ -266,8 +271,8 @@ class Cart:
             self.dt = dt
         self.save_history = save_history
 
-        if self.play_pregenerated == True:
-            self.target_position = self.random_track_f(self.time_total)
+        if self.use_pregenerated_target_position == True:
+            self.target_position = self.random_track_f(self.time)
             if self.target_position > 0.8 * self.HalfLength:
                 self.target_position = 0.8 * self.HalfLength
             elif self.target_position < -0.8 * self.HalfLength:
@@ -299,13 +304,13 @@ class Cart:
         self.u = Q2u(self.Q, self.p)
 
         # Update the total time of the simulation
-        self.time_total = self.time_total + self.dt
+        self.time = self.time + self.dt
 
         # If user chose to save history of the simulation it is saved now
         # It is saved first internally to a dictionary in the Cart instance
         if self.save_history:
             # Saving simulation data
-            self.dict_history['time'].append(around(self.time_total, 5))
+            self.dict_history['time'].append(around(self.time, 5))
             self.dict_history['dt'].append(around(self.dt * 1000.0, 3))
             self.dict_history['s.position'].append(around(self.s.position, 3))
             self.dict_history['s.positionD'].append(around(self.s.positionD, 4))
@@ -343,7 +348,7 @@ class Cart:
 
         self.slider_value = 0.0
 
-        self.time_total = 0.0
+        self.time = 0.0
 
     # This method draws elements and set properties of the CartPole figure
     # which do not change at every frame of the animation
@@ -438,12 +443,13 @@ class Cart:
                              'Q': [self.Q],
                              'target_position': [self.target_position]}
 
-    # This method saves the dictionary keeping the history of simulation to a .csv file
-    def save_history_csv(self, csv_name=None):
-
+    def augment_dict_history(self):
         # Augment dict
         self.dict_history['s.angle.sin'] = [around(np.sin(x), 4) for x in self.dict_history['s.angle']]
         self.dict_history['s.angle.cos'] = [around(np.cos(x), 4) for x in self.dict_history['s.angle']]
+
+    # This method saves the dictionary keeping the history of simulation to a .csv file
+    def save_history_csv(self, csv_name=None):
 
         # Make folder to save data (if not yet existing)
         try:
@@ -471,8 +477,6 @@ class Cart:
                 logpath_new = logpath_new + '-' + str(net_index) + '.csv'
                 net_index += 1
 
-
-
         # Write the .csv file
         with open(logpath, "w") as outfile:
             writer = csv.writer(outfile)
@@ -490,6 +494,53 @@ class Cart:
             writer.writerow(['# Data:'])
             writer.writerow(self.dict_history.keys())
             writer.writerows(zip(*self.dict_history.values()))
+
+    def get_history(self):
+
+        # Augment dict
+        self.dict_history['s.angle.sin'] = [around(np.sin(x), 4) for x in self.dict_history['s.angle']]
+        self.dict_history['s.angle.cos'] = [around(np.cos(x), 4) for x in self.dict_history['s.angle']]
+
+        return pd.DataFrame(self.dict_history)
+
+
+    def load_history_csv(self, csv_name=None, visualisation_only=True):
+        # Set path where to save the data
+        if csv_name is None or csv_name == '':
+            # get the latest file
+            try:
+                list_of_files = glob.glob('./data/' + '/*.csv')
+                file_path = max(list_of_files, key=os.path.getctime)
+            except FileNotFoundError:
+                print('Cannot load: No experiment recording found in data folder ' + './data/')
+                return False
+        else:
+            filename = csv_name
+            if csv_name[-4:] != '.csv':
+                filename += '.csv'
+
+            # check if file found in DATA_FOLDER_NAME or at local starting point
+            if not os.path.isfile(filename):
+                file_path = os.path.join('data', filename)
+                if not os.path.isfile(file_path):
+                    print(
+                        'Cannot load: There is no experiment recording file with name {} at local folder or in {}'.format(
+                            filename, './data/'))
+                    return False
+
+        # Get race recording
+        print('Loading file {}'.format(file_path))
+        try:
+            data: pd.DataFrame = pd.read_csv(file_path, comment='#')  # skip comment lines starting with #
+        except Exception as e:
+            print('Cannot load: Caught {} trying to read CSV file {}'.format(e, file_path))
+            return False
+
+        if visualisation_only:
+            data = data[['time', 'dt', 's.position', 's.positionD', 's.angle', 'u', 'target_position']]
+
+        return data
+
 
     def set_mode(self, new_mode=0):
 
